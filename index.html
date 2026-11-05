@@ -82,7 +82,7 @@ footer a{color:var(--ink2)}
   <button id="clearall" type="button">Clear all</button>
  </div>
  <div id="tracks"></div>
- <div id="meterwrap"><span>Input</span><div id="meter"><div id="meterfill"></div></div></div>
+ <p class="hint" id="diag" style="font-family:monospace"></p><button class="bigbtn secondary" id="beep" type="button">Test speaker (beep)</button><div id="meterwrap"><span>Input</span><div id="meter"><div id="meterfill"></div></div></div>
 </section>
 
 <section class="panel">
@@ -111,6 +111,7 @@ const FAST = params.has('fast');
 
 let ctx = null, inputNode = null, monitorGain = null, script = null;
 let loopLen = 0, masterStart = 0, armedTimer = null;
+let micStream = null, cbCount = 0, lastPeak = 0;
 let demoOsc = null, demoLfo = null, demoLfoGain = null, demoSrc = null;
 const tracks = [];
 
@@ -119,6 +120,7 @@ for (let i = 0; i < TRACK_COUNT; i++) {
 }
 
 async function ensureCtx() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC();
@@ -166,9 +168,11 @@ function attachCapture(node) {
 }
 
 function onAudio(ev) {
+  cbCount++;
   const data = ev.inputBuffer.getChannelData(0);
   let peak = 0;
   for (let i = 0; i < data.length; i += 8) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  lastPeak = Math.max(lastPeak * 0.9, peak);
   meter(peak);
   const now = ctx.currentTime;
   for (const t of tracks) {
@@ -414,7 +418,6 @@ async function useMic() {
     showMicError({ name: 'SecurityError', message: 'getUserMedia unavailable' });
     return;
   }
-  await ensureCtx();
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -426,7 +429,10 @@ async function useMic() {
       return;
     }
   }
+  await ensureCtx();
+  for (let i = 0; i < 3 && ctx.state !== 'running'; i++) { try { await ctx.resume(); } catch (e) {} await sleep(150); }
   teardownDemo();
+  micStream = stream;
   attachCapture(ctx.createMediaStreamSource(stream));
   startDeck();
 }
@@ -466,6 +472,16 @@ if (location.hostname.endsWith('github.io')) {
   if (sl) sl.innerHTML = 'Open source (MIT) &middot; <a href="https://github.com/yksanjo/pocket-looper">github.com/yksanjo/pocket-looper</a>';
 }
 buildDeck();
+setInterval(() => {
+  const d = document.getElementById('diag');
+  if (d && ctx) d.textContent = 'audio ' + ctx.state + ' | ' + ctx.sampleRate + ' Hz | mic frames ' + cbCount + ' | level ' + lastPeak.toFixed(3);
+}, 400);
+document.getElementById('beep').addEventListener('click', async () => {
+  await ensureCtx();
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  g.gain.value = 0.3; o.frequency.value = 440; o.connect(g); g.connect(ctx.destination);
+  o.start(); o.stop(ctx.currentTime + 0.4);
+});
 
 // --- Self test (?selftest=1, optional &fast): armed by the first trusted click ---
 function tlog(m) {
