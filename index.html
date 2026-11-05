@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101014">
+<title>Pocket Looper</title>
+<meta name="description" content="A minimal five-track loop station in the browser. Record a loop, layer four more tracks in sync. Free, open source, all audio stays on your device.">
+<style>
+:root{
+ --bg:#101014; --panel:#191920; --panel2:#212129; --line:#2c2c36;
+ --ink:#f4f2f0; --ink2:#a6a3ad; --accent:#34c07c; --rec:#e5484d;
+ --armed:#e8a13c; --stopped:#5b8def;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0 auto;background:var(--bg);color:var(--ink);max-width:600px;padding:24px 16px 64px;
+ font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+h1{font-size:26px;margin:0 0 4px;letter-spacing:-.02em}
+.sub{color:var(--ink2);margin:0 0 20px;font-size:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+.bigbtn{width:100%;min-height:52px;padding:14px;border-radius:12px;background:var(--accent);color:#06130c;font-weight:700;font-size:17px}
+.bigbtn.secondary{background:var(--panel2);color:var(--ink);border:1px solid var(--line);margin-top:10px;font-weight:600}
+.err{display:none;margin-top:12px;background:#2a1518;border:1px solid #59262b;color:#f2a9ad;border-radius:10px;padding:12px;font-size:14px;white-space:pre-wrap}
+.err.show{display:block}
+.hint{color:var(--ink2);font-size:13px;margin:12px 0 0}
+ol.howto{margin:0;padding-left:20px;color:var(--ink2);font-size:14px}
+ol.howto li{margin:6px 0}
+#deck[hidden]{display:none}
+#loopbar{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+#loopinfo{font-size:13px;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}
+#phase{flex:1;text-align:center;font-size:14px;font-weight:600;min-height:20px}
+#clearall{font-size:13px;color:var(--ink2);text-decoration:underline;padding:8px 4px}
+#useMicInstead{font-size:13px;color:var(--ink2);text-decoration:underline;padding:8px 4px}
+#frameblock .bigbtn{margin-top:10px}
+#frameblock p{margin:0}
+.track{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.tbtn{position:relative;width:60px;height:60px;min-width:60px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);
+ font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center}
+.track[data-state=recording] .tbtn{background:var(--rec);border-color:var(--rec);color:#fff;animation:pulse 1s infinite}
+.track[data-state=armed] .tbtn{border-color:var(--armed);color:var(--armed);animation:pulse 1.4s infinite}
+.track[data-state=playing] .tbtn{background:var(--accent);border-color:var(--accent);color:#06130c}
+.track[data-state=stopped] .tbtn{border-color:var(--stopped);color:var(--stopped)}
+@keyframes pulse{50%{opacity:.5}}
+.tmid{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.tname{font-size:13px;color:var(--ink2)}
+.tvol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+input[type=range]{flex:1;accent-color:var(--accent);height:28px}
+.tclear{font-size:13px;color:var(--ink2);text-decoration:underline;padding:8px 4px;min-height:44px}
+#meterwrap{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:12px;color:var(--ink2)}
+#meter{flex:1;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}
+#meterfill{height:100%;width:0;background:var(--accent);transition:width .08s linear}
+#testlog{display:none;margin-top:12px;background:#0a0a0d;border:1px solid var(--line);border-radius:10px;
+ padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;max-height:300px;overflow:auto}
+footer{color:var(--ink2);font-size:12px;line-height:1.6}
+footer a{color:var(--ink2)}
+</style>
+</head>
+<body>
+<header>
+ <h1>Pocket Looper</h1>
+ <p class="sub">A minimal five-track loop station in the browser. Record a loop, then layer four more tracks in sync.</p>
+</header>
+
+<section class="panel" id="setup">
+ <button class="bigbtn" id="enableMic">Enable microphone</button>
+ <button class="bigbtn secondary" id="useDemo">Try it without a mic (demo tone)</button>
+ <div class="err" id="micerr"></div>
+ <div class="err" id="frameblock">
+  <p id="frameblockmsg">This preview is embedded in a frame that blocks the microphone. Open the looper in its own browser tab to record.</p>
+  <button class="bigbtn" id="openFull" type="button">Open in its own tab</button>
+ </div>
+ <p class="hint">Wear headphones to avoid feedback. Your audio never leaves this device: no upload, no server.</p>
+</section>
+
+<section class="panel" id="deck" hidden>
+ <div id="loopbar">
+  <span id="loopinfo">No loop yet</span>
+  <span id="phase" role="status"></span>
+  <button id="useMicInstead" type="button" hidden>Use microphone instead</button>
+  <button id="clearall" type="button">Clear all</button>
+ </div>
+ <div id="tracks"></div>
+ <div id="meterwrap"><span>Input</span><div id="meter"><div id="meterfill"></div></div></div>
+</section>
+
+<section class="panel">
+ <ol class="howto">
+  <li>Press track 1, make a sound, press it again. That sets the loop length and it starts playing.</li>
+  <li>Press any other track: it waits for the next loop, records exactly one loop, then plays in sync.</li>
+  <li>Tap a playing track to stop it, tap again to bring it back in sync. Volume slides, Clear wipes one track.</li>
+  <li>Clear every track to reset the loop length and start over.</li>
+ </ol>
+</section>
+
+<div id="testlog"></div>
+
+<footer>
+ <p id="srcline">Free, no account, no upload. Everything runs in this browser tab.</p>
+ <p>Recording uses your browser's Web Audio API. Left out to stay minimal: overdub, effects, undo and saving loops, so timing can sit a few milliseconds off a hardware unit.</p>
+</footer>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const TRACK_COUNT = 5;
+const params = new URLSearchParams(location.search);
+const SELFTEST = params.has('selftest');
+const FAST = params.has('fast');
+
+let ctx = null, inputNode = null, monitorGain = null, script = null;
+let loopLen = 0, masterStart = 0, armedTimer = null;
+let demoOsc = null, demoLfo = null, demoLfoGain = null, demoSrc = null;
+const tracks = [];
+
+for (let i = 0; i < TRACK_COUNT; i++) {
+  tracks.push({ n: i + 1, state: 'empty', chunks: [], recSamples: 0, recEndAt: 0, armedAt: 0, armedTimer: null, buffer: null, source: null, gain: null, volume: 0.8 });
+}
+
+async function ensureCtx() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC();
+  }
+  if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
+  return ctx;
+}
+
+function makeDemoSource() {
+  demoSrc = ctx.createGain();
+  demoSrc.gain.value = 0.55;
+  demoOsc = ctx.createOscillator();
+  demoOsc.type = 'sine';
+  demoOsc.frequency.value = 220;
+  demoLfo = ctx.createOscillator();
+  demoLfo.type = 'sine';
+  demoLfo.frequency.value = 2;
+  demoLfoGain = ctx.createGain();
+  demoLfoGain.gain.value = 0.3;
+  demoOsc.connect(demoSrc);
+  demoLfo.connect(demoLfoGain);
+  demoLfoGain.connect(demoSrc.gain);
+  demoOsc.start();
+  demoLfo.start();
+  return demoSrc;
+}
+
+function teardownDemo() {
+  [demoOsc, demoLfo].forEach(n => { try { n && n.stop(); } catch (e) {} });
+  [demoOsc, demoLfo, demoLfoGain, demoSrc].forEach(n => { try { n && n.disconnect(); } catch (e) {} });
+  demoOsc = demoLfo = demoLfoGain = demoSrc = null;
+}
+
+function attachCapture(node) {
+  if (script) { try { script.disconnect(); } catch (e) {} script.onaudioprocess = null; script = null; }
+  if (monitorGain) { try { monitorGain.disconnect(); } catch (e) {} monitorGain = null; }
+  script = ctx.createScriptProcessor(2048, 1, 1);
+  node.connect(script);
+  monitorGain = ctx.createGain();
+  monitorGain.gain.value = 0;
+  script.connect(monitorGain);
+  monitorGain.connect(ctx.destination);
+  script.onaudioprocess = onAudio;
+  inputNode = node;
+}
+
+function onAudio(ev) {
+  const data = ev.inputBuffer.getChannelData(0);
+  let peak = 0;
+  for (let i = 0; i < data.length; i += 8) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  meter(peak);
+  const now = ctx.currentTime;
+  for (const t of tracks) {
+    if (t.state === 'armed' && now >= t.armedAt) {
+      t.state = 'recording';
+      t.chunks = [];
+      t.recSamples = 0;
+      t.recStart = t.armedAt;
+      t.recEndAt = t.armedAt + loopLen;
+      ui(t);
+      setPhase('Track ' + t.n + ' recording');
+    }
+    if (t.state === 'recording') {
+      t.chunks.push(data.slice(0));
+      t.recSamples += data.length;
+      const expected = Math.round((t.recEndAt - t.recStartAt()) * ctx.sampleRate);
+      if (t.recSamples >= expected) finishRecord(t);
+    }
+  }
+}
+
+// track 1 has no fixed end; recStartAt helper
+tracks.forEach(t => { t.recStartAt = () => t.recStart; });
+
+function finishRecord(t) {
+  const expected = Math.round((t.recEndAt - t.recStartAt()) * ctx.sampleRate);
+  const total = Math.max(0, Math.min(t.recSamples, expected));
+  if (!total) { t.state = 'empty'; ui(t); return; }
+  const buf = ctx.createBuffer(1, total, ctx.sampleRate);
+  const ch = buf.getChannelData(0);
+  let off = 0;
+  for (const c of t.chunks) {
+    if (off >= total) break;
+    const part = off + c.length > total ? c.subarray(0, total - off) : c;
+    ch.set(part, off);
+    off += part.length;
+  }
+  t.chunks = [];
+  t.buffer = buf;
+  if (t.n === 1 && !loopLen) {
+    const trim = inputIsDemo() ? 0 : Math.round(((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * ctx.sampleRate);
+    if (trim > 0 && trim < total - 2048) {
+      const b2 = ctx.createBuffer(1, total - trim, ctx.sampleRate);
+      b2.getChannelData(0).set(ch.subarray(trim));
+      t.buffer = b2;
+    }
+    loopLen = t.buffer.duration;
+    const when = ctx.currentTime + 0.08;
+    masterStart = when;
+    startSource(t, when);
+    t.state = 'playing';
+    setPhase('Loop set: ' + loopLen.toFixed(2) + 's');
+    ui(t); uiLoop();
+  } else {
+    startSource(t, t.recEndAt);
+    t.state = 'playing';
+    setPhase('');
+    ui(t);
+  }
+}
+
+function startSource(t, when) {
+  stopSource(t);
+  const src = ctx.createBufferSource();
+  src.buffer = t.buffer;
+  src.loop = true;
+  t.gain = t.gain || ctx.createGain();
+  t.gain.gain.value = t.volume;
+  src.connect(t.gain);
+  t.gain.connect(ctx.destination);
+  src.start(Math.max(when, ctx.currentTime + 0.01));
+  t.source = src;
+}
+
+function stopSource(t) {
+  if (t.source) { try { t.source.stop(); } catch (e) {} try { t.source.disconnect(); } catch (e) {} t.source = null; }
+}
+
+function nextBoundary(now) {
+  if (!loopLen) return now + 0.05;
+  let b = masterStart + Math.ceil((now - masterStart) / loopLen) * loopLen;
+  if (b - now < 0.02) b += loopLen;
+  return b;
+}
+
+function inputIsDemo() { return !!(demoSrc && inputNode === demoSrc); }
+
+function press(t) {
+  if (!ctx) return;
+  if (ctx.state !== 'running') ctx.resume();
+  if (t.state === 'empty') {
+    if (t.n === 1 && !loopLen) {
+      t.state = 'recording'; t.chunks = []; t.recSamples = 0;
+      t.recStart = ctx.currentTime; t.recEndAt = Infinity;
+      setPhase('Recording track 1 - tap again to set the loop');
+      ui(t);
+    } else if (loopLen) {
+      t.state = 'armed'; t.armedAt = nextBoundary(ctx.currentTime);
+      setPhase('Track ' + t.n + ' armed - starts at the next loop');
+      ui(t);
+    } else {
+      setPhase('Record track 1 first - it sets the loop length');
+    }
+  } else if (t.state === 'recording') {
+    if (t.n === 1) t.recEndAt = ctx.currentTime;
+  } else if (t.state === 'armed') {
+    t.state = 'empty'; t.armedAt = 0; setPhase(''); ui(t);
+  } else if (t.state === 'playing') {
+    stopSource(t); t.state = 'stopped'; setPhase(''); ui(t);
+  } else if (t.state === 'stopped') {
+    const when = loopLen ? nextBoundary(ctx.currentTime) : ctx.currentTime + 0.05;
+    startSource(t, when); t.state = 'playing'; setPhase(''); ui(t);
+  }
+}
+
+function clear(t) {
+  stopSource(t);
+  t.buffer = null; t.chunks = []; t.recSamples = 0; t.armedAt = 0;
+  t.state = 'empty';
+  setPhase('');
+  ui(t);
+  if (tracks.every(x => x.state === 'empty' && !x.buffer)) {
+    loopLen = 0; masterStart = 0; uiLoop();
+  }
+}
+
+function ui(t) {
+  const row = document.getElementById('track' + t.n);
+  if (!row) return;
+  row.dataset.state = t.state;
+  const labels = { empty: String(t.n), recording: '\u25CF', armed: '\u25CC', playing: '\u25A0', stopped: '\u25B6' };
+  row.querySelector('.tbtn').textContent = labels[t.state];
+  const names = {
+    empty: 'Track ' + t.n + ' \u00B7 tap to record',
+    recording: 'Track ' + t.n + ' \u00B7 recording\u2026',
+    armed: 'Track ' + t.n + ' \u00B7 armed, waits for loop',
+    playing: 'Track ' + t.n + ' \u00B7 playing',
+    stopped: 'Track ' + t.n + ' \u00B7 stopped'
+  };
+  row.querySelector('.tname').textContent = names[t.state];
+}
+
+function uiLoop() {
+  $('#loopinfo').textContent = loopLen ? 'Loop ' + loopLen.toFixed(2) + 's' : 'No loop yet';
+}
+
+function setPhase(msg) { $('#phase').textContent = msg; }
+
+let lastMeter = 0;
+function meter(peak) {
+  const now = performance.now();
+  if (now - lastMeter < 80) return;
+  lastMeter = now;
+  $('#meterfill').style.width = Math.min(100, Math.round(peak * 140)) + '%';
+}
+
+function buildDeck() {
+  const wrap = $('#tracks');
+  wrap.innerHTML = '';
+  for (const t of tracks) {
+    const row = document.createElement('div');
+    row.className = 'track';
+    row.id = 'track' + t.n;
+    row.dataset.state = 'empty';
+    row.innerHTML =
+      '<button class="tbtn" type="button" aria-label="Track ' + t.n + ' record or play">' + t.n + '</button>' +
+      '<div class="tmid"><span class="tname"></span>' +
+      '<div class="tvol"><span>Vol</span><input type="range" min="0" max="100" value="80" aria-label="Track ' + t.n + ' volume"></div></div>' +
+      '<button class="tclear" type="button">Clear</button>';
+    row.querySelector('.tbtn').addEventListener('click', () => press(t));
+    row.querySelector('.tclear').addEventListener('click', () => clear(t));
+    row.querySelector('input[type=range]').addEventListener('input', ev => {
+      t.volume = ev.target.value / 100;
+      if (t.gain) t.gain.gain.value = t.volume;
+    });
+    wrap.appendChild(row);
+    ui(t);
+  }
+}
+
+function showMicError(e) {
+  const el = $('#micerr');
+  let msg;
+  if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+    msg = 'Microphone access was blocked. Tap Enable microphone again and choose Allow. If no prompt appears, open this page in its own browser tab (not inside a chat preview) and check the browser settings allow the microphone for this site.';
+  } else if (e && e.name === 'NotFoundError') {
+    msg = 'No microphone was found on this device. You can still try the demo tone below.';
+  } else if (e && e.name === 'NotReadableError') {
+    msg = 'The microphone is busy in another app. Close that app and try again.';
+  } else {
+    msg = 'Microphone error: ' + (e && (e.name + ' - ' + e.message) || 'unknown');
+  }
+  if (inIframe() && e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+    msg = 'The microphone is blocked inside this embedded preview. Open the looper in its own browser tab and allow the microphone there.';
+  }
+  el.textContent = msg + '\n(' + (e && e.name || 'unknown') + ')';
+  el.classList.add('show');
+  updateFrameBlock();
+}
+
+function inIframe() {
+  try { return window.self !== window.top; } catch (e) { return true; }
+}
+
+function leaseSecondsLeft() {
+  try {
+    const m = location.search.match(/[?&]lease=([^&#]+)/);
+    if (!m) return Infinity;
+    const payload = JSON.parse(atob(m[1].split('.')[0].replace(/-/g, '+').replace(/_/g, '/')));
+    return (payload.e || 0) - Math.floor(Date.now() / 1000);
+  } catch (e) { return Infinity; }
+}
+
+function openFullTab() {
+  if (leaseSecondsLeft() > 12) {
+    window.open(location.href, '_blank');
+  } else {
+    try { sessionStorage.setItem('pl_escape', '1'); } catch (e) {}
+    window.open('https://files.instinct.com/7zrgy92nrlag-pocket-looper', '_top');
+  }
+}
+
+async function micBlockedByFrame() {
+  if (!inIframe()) return false;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
+  try { const p = await navigator.permissions.query({ name: 'microphone' }); return p.state === 'denied'; } catch (e) { return false; }
+}
+
+async function updateFrameBlock() {
+  const el = $('#frameblock');
+  if (!el) return;
+  if (await micBlockedByFrame()) {
+    let again = false;
+    try { again = sessionStorage.getItem('pl_escape') === '1'; } catch (e) {}
+    if (again) $('#frameblockmsg').textContent = 'Fresh page loaded. Tap the button once more to open the looper in its own tab.';
+    el.classList.add('show');
+  }
+}
+
+async function useMic() {
+  $('#micerr').classList.remove('show');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showMicError({ name: 'SecurityError', message: 'getUserMedia unavailable' });
+    return;
+  }
+  await ensureCtx();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e1) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e2) {
+      showMicError(e1 && e1.name !== 'OverconstrainedError' ? e1 : e2);
+      return;
+    }
+  }
+  teardownDemo();
+  attachCapture(ctx.createMediaStreamSource(stream));
+  startDeck();
+}
+
+async function useDemoTone() {
+  $('#micerr').classList.remove('show');
+  await ensureCtx();
+  teardownDemo();
+  attachCapture(makeDemoSource());
+  startDeck();
+}
+
+function startDeck() {
+  $('#setup').style.display = 'none';
+  $('#deck').hidden = false;
+  $('#useMicInstead').hidden = !inputIsDemo();
+  uiLoop();
+  setPhase(inputIsDemo() ? 'Demo tone - press track 1 and record a loop' : 'Mic on - press track 1 and record a loop');
+}
+
+$('#enableMic').addEventListener('click', useMic);
+$('#useDemo').addEventListener('click', useDemoTone);
+$('#clearall').addEventListener('click', () => { tracks.forEach(clear); });
+$('#openFull').addEventListener('click', openFullTab);
+$('#useMicInstead').addEventListener('click', () => {
+  $('#setup').style.display = '';
+  $('#micerr').classList.remove('show');
+  updateFrameBlock();
+  useMic();
+});
+updateFrameBlock();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && ctx && ctx.state !== 'running') ctx.resume();
+});
+if (location.hostname.endsWith('github.io')) {
+  var sl = document.getElementById('srcline');
+  if (sl) sl.innerHTML = 'Open source (MIT) &middot; <a href="https://github.com/yksanjo/pocket-looper">github.com/yksanjo/pocket-looper</a>';
+}
+buildDeck();
+
+// --- Self test (?selftest=1, optional &fast): armed by the first trusted click ---
+function tlog(m) {
+  const el = $('#testlog');
+  el.style.display = 'block';
+  el.textContent += m + '\n';
+}
+function assert(c, m) { if (!c) throw new Error(m); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function runSelfTest() {
+  try {
+    tlog('SELFTEST start');
+
+    showMicError({ name: 'NotAllowedError' });
+    assert($('#micerr').classList.contains('show') && $('#micerr').textContent.indexOf('blocked') >= 0, 'mic denial message visible');
+    tlog('PASS mic denial state renders: ' + $('#micerr').textContent.split('\n')[1]);
+    $('#micerr').classList.remove('show');
+
+    try {
+      const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+      probe.getTracks().forEach(tr => tr.stop());
+      tlog('INFO getUserMedia granted here (device present)');
+    } catch (e) {
+      tlog('INFO getUserMedia probe: ' + e.name + ' (no mic device in this environment)');
+    }
+
+    await useDemoTone();
+    assert(ctx && ctx.state === 'running', 'audio context running, got ' + (ctx && ctx.state));
+    tlog('PASS audio context running, sampleRate=' + ctx.sampleRate);
+
+    const hold = FAST ? 1.0 : 1.5;
+    press(tracks[0]);
+    await sleep(250);
+    assert(tracks[0].state === 'recording', 'track 1 recording, got ' + tracks[0].state);
+    await sleep(hold * 1000);
+    press(tracks[0]);
+    await sleep(400);
+    assert(tracks[0].state === 'playing', 'track 1 playing after close, got ' + tracks[0].state);
+    assert(loopLen > 0.5 && loopLen < 3, 'loop length sane, got ' + loopLen.toFixed(3));
+    tlog('PASS loop set: ' + loopLen.toFixed(3) + 's, track 1 playing');
+
+    press(tracks[1]);
+    assert(tracks[1].state === 'armed', 'track 2 armed, got ' + tracks[1].state);
+    await sleep((loopLen * 2 + 0.6) * 1000);
+    assert(tracks[1].state === 'playing', 'track 2 playing after synced record, got ' + tracks[1].state);
+    const d2 = tracks[1].buffer.duration;
+    assert(Math.abs(d2 - loopLen) < 0.12, 'track 2 length within 120ms of loop, got ' + d2.toFixed(3));
+    const cycles = (tracks[1].recEndAt - masterStart) / loopLen;
+    assert(Math.abs(cycles - Math.round(cycles)) < 0.02, 'track 2 aligned to a master cycle boundary');
+    tlog('PASS track 2 recorded one loop (' + d2.toFixed(3) + 's), starts on master cycle ' + Math.round(cycles));
+
+    press(tracks[0]);
+    assert(tracks[0].state === 'stopped', 'track 1 stopped, got ' + tracks[0].state);
+    assert(tracks[1].state === 'playing', 'track 2 keeps playing while track 1 stopped');
+    press(tracks[0]);
+    assert(tracks[0].state === 'playing', 'track 1 resumed, got ' + tracks[0].state);
+    tlog('PASS track 1 stop/play with track 2 still playing');
+
+    const vol = document.querySelectorAll('input[type=range]')[1];
+    vol.value = 20;
+    vol.dispatchEvent(new Event('input'));
+    assert(Math.abs(tracks[1].gain.gain.value - 0.2) < 0.001, 'volume applied, got ' + tracks[1].gain.gain.value);
+    tlog('PASS volume fader sets gain 0.20');
+
+    clear(tracks[0]);
+    assert(tracks[0].state === 'empty' && !tracks[0].buffer, 'track 1 cleared');
+    assert(loopLen > 0, 'loop length kept while track 2 remains');
+    assert(tracks[1].state === 'playing', 'track 2 still playing after track 1 clear');
+    tlog('PASS clearing track 1 keeps the loop while track 2 plays');
+
+    press(tracks[0]);
+    assert(tracks[0].state === 'armed', 'track 1 re-armed in sync, got ' + tracks[0].state);
+    await sleep((loopLen * 2 + 0.6) * 1000);
+    assert(tracks[0].state === 'playing', 'track 1 re-recorded in sync, got ' + tracks[0].state);
+    assert(Math.abs(tracks[0].buffer.duration - loopLen) < 0.12, 're-recorded track 1 is one loop');
+    tlog('PASS track 1 re-recorded one loop in sync');
+
+    $('#clearall').click();
+    assert(tracks.every(t => t.state === 'empty' && !t.buffer), 'all tracks empty after Clear all');
+    assert(loopLen === 0, 'loop length reset after Clear all, got ' + loopLen);
+    assert($('#loopinfo').textContent === 'No loop yet', 'loop info reset');
+    tlog('PASS Clear all resets loop length');
+
+    tlog('SELFTEST PASS');
+    window.__selftest = 'PASS';
+  } catch (err) {
+    tlog('SELFTEST FAIL: ' + err.message);
+    window.__selftest = 'FAIL: ' + err.message;
+  }
+}
+
+if (SELFTEST) {
+  tlog('SELFTEST armed - runs on first trusted click');
+  const once = () => { document.removeEventListener('click', once, true); setTimeout(runSelfTest, 500); };
+  document.addEventListener('click', once, true);
+}
+</script>
+</body>
+</html>
